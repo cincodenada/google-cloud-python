@@ -24,6 +24,7 @@ from grpc import StatusCode
 
 # pylint: disable=ungrouped-imports
 from google.cloud.exceptions import NotFound
+from google.cloud.exceptions import GrpcRendezvous
 from google.cloud.spanner._helpers import _options_with_prefix
 from google.cloud.spanner.batch import Batch
 from google.cloud.spanner.snapshot import Snapshot
@@ -285,6 +286,10 @@ class Session(object):
                 txn.begin()
             try:
                 func(txn, *args, **kw)
+            except GrpcRendezvous as exc:
+                _delay_until_retry(exc, deadline)
+                del self._transaction
+                continue
             except GaxError as exc:
                 _delay_until_retry(exc, deadline)
                 del self._transaction
@@ -318,7 +323,12 @@ def _delay_until_retry(exc, deadline):
     :type deadline: float
     :param deadline: maximum timestamp to continue retrying the transaction.
     """
-    if exc_to_code(exc.cause) != StatusCode.ABORTED:
+    if isinstance(exc, GrpcRendezvous):
+        cause = exc
+    else:
+        cause = exc.cause
+
+    if exc_to_code(cause) != StatusCode.ABORTED:
         raise
 
     now = time.time()
@@ -326,7 +336,7 @@ def _delay_until_retry(exc, deadline):
     if now >= deadline:
         raise
 
-    delay = _get_retry_delay(exc)
+    delay = _get_retry_delay(cause)
     if delay is not None:
 
         if now + delay > deadline:
@@ -336,7 +346,7 @@ def _delay_until_retry(exc, deadline):
 # pylint: enable=misplaced-bare-raise
 
 
-def _get_retry_delay(exc):
+def _get_retry_delay(cause):
     """Helper for :func:`_delay_until_retry`.
 
     :type exc: :class:`google.gax.errors.GaxError`
@@ -345,7 +355,7 @@ def _get_retry_delay(exc):
     :rtype: float
     :returns: seconds to wait before retrying the transaction.
     """
-    metadata = dict(exc.cause.trailing_metadata())
+    metadata = dict(cause.trailing_metadata())
     retry_info_pb = metadata.get('google.rpc.retryinfo-bin')
     if retry_info_pb is not None:
         retry_info = RetryInfo()
