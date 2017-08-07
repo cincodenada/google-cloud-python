@@ -270,7 +270,7 @@ class _SinksAPI(object):
         """
         options = None
         path = 'projects/%s/sinks/%s' % (project, sink_name)
-        sink_pb = LogSink(name=path, filter=filter_, destination=destination)
+        sink_pb = LogSink(name=sink_name, filter=filter_, destination=destination)
         try:
             sink_pb = self._gax_api.update_sink(path, sink_pb, options=options)
         except GaxError as exc:
